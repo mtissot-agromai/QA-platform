@@ -154,15 +154,25 @@ def add_area(area_filepath: str)->bool:
         return False
     
     try:
-        sim_button = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Sim, é meu')]"))
+        enviar_button1 = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Enviar arquivo')]"))
         )
-        sim_button.click()
-        logger.info("Clicked 'Sim é meu'")    
+        enviar_button1.click()
+        logger.info("Clicked 'Enviar1'")    
     except Exception as e:
         logger.error(f"Error when clicking 'Sim é meu': {e}")
         return False
     
+    try:
+        enviar_button1 = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Enviar arquivo')]"))
+        )
+        enviar_button1.click()
+        logger.info("Clicked 'Enviar1'")    
+    except Exception as e:
+        logger.error(f"Error when clicking 'Sim é meu': {e}")
+        return False
+
 
 
     return True
