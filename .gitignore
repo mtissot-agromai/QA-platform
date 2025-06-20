@@ -4,3 +4,6 @@ data
 data/
 *.log
 .env
+geojson
+Teste*
+tes*

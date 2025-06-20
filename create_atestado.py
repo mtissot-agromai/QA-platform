@@ -1,40 +1,47 @@
 import selenium
 from dotenv import load_dotenv
 import os
+import geopandas as gpd
+import random
 
 import logging, sys
-filename = sys.argv[0].split('/')[-1][:-3]
 logger = logging.getLogger()
-file_handler = logging.FileHandler(filename="create_atestado.log")
-stdout_handler = logging.StreamHandler(stream=sys.stdout)
-handlers = [file_handler, stdout_handler]
-logging.basicConfig(level=logging.INFO,
-    format='[%(asctime)s] {%(filename)s:%(lineno)d} %(levelname)s - %(message)s',
-    handlers=handlers)
+logger.setLevel(logging.DEBUG)
 
-logger.info("Log it")
+formatter = logging.Formatter('[%(asctime)s] {%(filename)s:%(lineno)d} %(levelname)s - %(message)s')
+
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setLevel(logging.INFO)
+stdout_handler.setFormatter(formatter)
+
+error_file_handler = logging.FileHandler('errors_creation.log')
+error_file_handler.setLevel(logging.ERROR)
+error_file_handler.setFormatter(formatter)
+
+warning_file_handler = logging.FileHandler('warnings.log')
+warning_file_handler.setLevel(logging.WARNING)
+warning_file_handler.setFormatter(formatter)
+
+logger.handlers = []
+logger.addHandler(stdout_handler)
+logger.addHandler(error_file_handler)
 
 load_dotenv()
-
-USER_EMAIL = os.environ.get("USER_EMAIL", "")
-USER_PASSWORD = os.environ.get("USER_PASSWORD", "")
-
-if not USER_EMAIL or not USER_PASSWORD:
-    print("Couldn't load user email or password from environment")
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.action_chains import ActionChains
 import time
 
 # Initialize the WebDriver (assuming Chrome is installed and chromedriver is in PATH)
-driver = webdriver.Chrome()
-driver.maximize_window()
 
-driver.get("https://dev.agromai.com.br/mapa/")
+driver = webdriver.Chrome()
 
 def login(USER_EMAIL, USER_PASSWORD)->bool:
+    driver.maximize_window()
     try:
         driver.get("https://dev.agromai.com.br/mapa/login")
         logger.info("Navigated to login page.")
@@ -74,11 +81,99 @@ def login(USER_EMAIL, USER_PASSWORD)->bool:
 
     return True
 
+
+def add_area(area_filepath: str)->bool:
+
+    width = driver.execute_script("return window.innerWidth")
+    height = driver.execute_script("return window.innerHeight")
+
+    # Read GeoJSON file
+    gdf = gpd.read_file(f"{area_filepath}")
+    centroide = f"{gdf['geometry'][0].centroid.y}, {gdf['geometry'][0].centroid.x}"
+
+    try:
+        areas_link = wait(30).until(
+            EC.element_to_be_clickable((By.XPATH, "//span[contains(., 'Áreas')]"))
+        )
+        areas_link.click()
+        logger.info("Navigating to 'Áreas' page, from the sidebar")
+    except Exception as e:
+        logger.error(f"Error when trying to navigate to the Areas page: {e}")
+        return False
+    
+    try:
+        location_field = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//input[contains(., 'Buscar localização')]"))
+        )
+        location_field.send_keys(centroide, Keys.ENTER)
+        logger.info("Entered location")
+    except Exception as e:
+        logger.error(f"Error when entering location: {e}")
+        return False
+    
+    time.sleep(3)
+
+    try:
+        marcar_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Marcar')]"))
+        )
+        marcar_button.click()
+        logger.info("Clicked Marcar")    
+    except Exception as e:
+        logger.error(f"Error when clicking Marcar: {e}")
+        return False
+
+    try:
+        # Move and click at center
+        actions = ActionChains(driver)
+        actions.move_by_offset(width // 2, height // 2).click().perform()
+        # Reset mouse position for future actions
+        actions.move_by_offset(-width // 2, -height // 2).perform()
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        return False
+
+    try:
+        car_field = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//input[contains(., 'últimos dígitos')]"))
+        )
+        car_field.send_keys("11111")
+        logger.info("Entered location")
+    except Exception as e:
+        logger.error(f"Error when entering location: {e}")
+        return False
+    
+    try:
+        sim_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Sim, é meu')]"))
+        )
+        sim_button.click()
+        logger.info("Clicked 'Sim é meu'")    
+    except Exception as e:
+        logger.error(f"Error when clicking 'Sim é meu': {e}")
+        return False
+    
+    try:
+        sim_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Sim, é meu')]"))
+        )
+        sim_button.click()
+        logger.info("Clicked 'Sim é meu'")    
+    except Exception as e:
+        logger.error(f"Error when clicking 'Sim é meu': {e}")
+        return False
+    
+
+
+    return True
+
 def wait(time: int):
     return WebDriverWait(driver, time)
 
 
 def novo_atestado(target_car: str)->bool:
+    car_shown = target_car[0:3] + "*"*5+target_car[-5:len(target_car)]
+    print(car_shown)
     try:
         atestados_link = wait(30).until(
             EC.element_to_be_clickable((By.XPATH, "//span[contains(., 'Atestados')]"))
@@ -102,18 +197,17 @@ def novo_atestado(target_car: str)->bool:
     try:
         button = wait(20).until(EC.element_to_be_clickable((
             By.XPATH,
-            f"//h3[text()='{target_car}']/following::button[1]"
+            f"//h3[text()='-*****']/following::button[1]"
         )))
         button.click()
-        logger.info(f"Clicked button associated with CAR: {target_car}")
+        logger.info(f"Clicked button associated with first CAR:")
     except Exception as e:
-        logger.error(f"Error when trying to click button {target_car}: {e}")
+        logger.error(f"Error when trying to click button for first CAR on the list: {e}")
         return False
-    
-    
+
     try:
         container = WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, "div.ant-checkbox-group")))
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div.ant-checkbox-group")))
         checkboxes = container.find_elements(By.CSS_SELECTOR, "input.ant-checkbox-input[type='checkbox']")
         for checkbox in checkboxes:
             if not checkbox.is_selected():
@@ -122,200 +216,391 @@ def novo_atestado(target_car: str)->bool:
     except Exception as e:
         logger.error(f"Error when checking talhão boxes: {e}")
         return False
+
+    try:
+        continuar_button = wait(10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Continuar')]"))
+        )
+        continuar_button.click()
+        logger.info("Clicked 'Continuar' button")
+    except Exception as e:
+        logger.error(f"Couldn't 'Continuar' button: {e}")
+        return False
+    
+    try:
+        continuar_button_again = wait(10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Continuar')]"))
+        )
+        continuar_button_again.click()
+        logger.info("Clicked 'Continuar' button on invasion screen")
+    except Exception as e:
+        logger.error(f"Couldn't 'Continuar' button on invasion screen: {e}")
+        return False
+    
+    if (len(checkboxes) > 1):
+        try:
+            for i in range(len(checkboxes)-1):
+                next_button = wait(10).until(
+                EC.element_to_be_clickable((By.XPATH, "//button[span[contains(text(), 'Próximo')]]"))
+                )
+                next_button.click()
+            logger.info(f"Clicked 'Próximo' button {len(checkboxes)} times")
+        except Exception as e:
+            logger.error(f"Error when clicking 'Próximo' button at time {i}: {e}")
+            return False
+    
+    try:
+        finalizar_analise_button = wait(10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[span[contains(text(), 'Finalizar análise')]]"))
+        )
+        finalizar_analise_button.click()
+        logger.info(f"Clicked 'Finalizar análise' button")
+    except Exception as e:
+        logger.error(f"Error when clicking 'Finalizar análise' button {e}")
+        return False
+    
+    try:
+        list_items = WebDriverWait(driver, 10).until(
+            EC.presence_of_all_elements_located((By.CSS_SELECTOR, "ul.ant-list-items > li"))
+        )
+        for li in list_items:
+            chosen = random.choice(["Soja", "Milho", "Arroz", "Feijão"])
+            # First dropdown
+            try:
+                dropdowns = li.find_elements(By.CSS_SELECTOR, ".ant-select")
+                dropdowns[0].click()
+                WebDriverWait(driver, 5).until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".ant-select-dropdown")))
+                driver.find_element(By.XPATH, f"//div[@class='rc-virtual-list']//div[contains(text(), '{chosen}')]").click()
+            except Exception as e:
+                logger.error(f"Error when selecting crop: {chosen} -> {e}")
+                return False
+
+            try:
+                wait(40).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, 'input[placeholder="Selecione a data"]'))
+                ).click()
+                
+                wait(40).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, 'td[title]:not(.ant-picker-cell-disabled)'))
+                ).click()
+
+            except Exception as e:
+                logger.error(f"Error when selecting date crop: {e}", exc_info=True)
+                return False
+            
+        try:
+            continuar_button = wait(10).until(
+                EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Continuar')]"))
+            )
+            continuar_button.click()
+            logger.info("Clicked 'Continuar' button")
+        except Exception as e:
+            logger.error(f"Couldn't 'Continuar' button: {e}")
+            return False
+    except Exception as e:
+        logger.error(f"Error when selecting crop and date for each selected Talhão: {e}")
+        return False
+    
+    try:
+        banco_field = wait(5).until(
+        EC.presence_of_element_located((By.NAME, "documents.2957.issuing_institute"))
+    )
+        banco_field.send_keys("Banrisul")
+        logger.info("Entered issuing institute")
+    except Exception as e:
+        logger.error(f"Error when entering issuing institute: {e}")
+        return False
+    
+    try:
+        selection_item = wait(10).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "span.ant-select-selection-item"))
+        )
+        selection_item.click()
+        selection_item.send_keys(Keys.ENTER)
+    except Exception as e:
+        logger.error(f"Error when selecting city: {e}")
+        return False
+
+    try:
+        valor_field = wait(5).until(
+        EC.presence_of_element_located((By.NAME, "documents.2957.requested_amount"))
+    )
+        valor_field.send_keys("1111111")
+        logger.info("Entered requested loan amount")
+    except Exception as e:
+        logger.error(f"Error when entering requested loan amount: {e}")
+        return False
+    
+    try:
+        continue_button = wait(40).until(
+        EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Continuar')]"))
+    )
+        continue_button.click()
+        logger.info("Clicked 'Continuar'")    
+    except Exception as e:
+        logger.error(f"Error when clicking 'Continuar': {e}", exc_info=True)
+        return False
+    
+    try:
+        accordance_checkbox = wait(5).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "input.ant-checkbox-input[type='checkbox']"))
+        )
+        accordance_checkbox.click()
+        logger.info(f"Checked the 'Estou de acordo' checkbox")
+    except Exception as e:
+        logger.error(f"Error {e}")
+        return False
+    
+    try:
+        continue_button = wait(40).until(
+        EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Continuar')]"))
+    )
+        continue_button.click()
+        logger.info("Clicked 'Continuar'")    
+    except Exception as e:
+        logger.error(f"Error when clicking 'Continuar': {e}", exc_info=True)
+        return False
+    
+    # CPF
+    try:
+        cpf_field = wait(5).until(
+        EC.presence_of_element_located((By.NAME, "cpf"))
+    )
+        cpf_field.send_keys("81681442019")
+        logger.info("Entered CPF: 816.814.420-19")
+    except Exception as e:
+        logger.error(f"Error when entering CPF: {e}")
+        return False
+    
+    # Celular
+    try:
+        celular_field = wait(5).until(
+        EC.presence_of_element_located((By.NAME, "phoneNumber"))
+    )
+        celular_field.send_keys("11111111111")
+        logger.info("Entered phone number")
+    except Exception as e:
+        logger.error(f"Error when entering requested loan amount: {e}")
+        return False
+    
+    try:
+        novo_endereco = wait(5).until(
+        EC.element_to_be_clickable((By.XPATH, "//span[contains(., 'Novo endereço de cobrança')]"))
+        )
+        novo_endereco.click()
+        logger.info("Entered phone number")
+    except Exception as e:
+        logger.error(f"Error when entering requested loan amount: {e}")
+        return False
+    
+    try:
+        cep_field = wait(5).until(
+        EC.presence_of_element_located((By.NAME, "postal_code"))
+    )
+        cep_field.send_keys("90620001", Keys.ENTER)
+        logger.info("Entered CEP")
+    except Exception as e:
+        logger.error(f"Error when entering requested loan amount: {e}")
+        return False
+    
+    try:
+        number_field = wait(5).until(
+        EC.presence_of_element_located((By.NAME, "number"))
+    )
+        number_field.send_keys("1")
+        logger.info("Entered CEP")
+    except Exception as e:
+        logger.error(f"Error when entering requested loan amount: {e}")
+        return False
+    
+    try:
+        continue_button = wait(40).until(
+        EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Continuar')]"))
+    )
+        continue_button.click()
+        logger.info("Clicked 'Continuar'")    
+    except Exception as e:
+        logger.error(f"Error when clicking 'Continuar': {e}", exc_info=True)
+        return False
     
     return True
 
+def register(email_address, USER_PASSWORD)->bool:
+    # service = webdriver.ChromeService(log_output="browserlog.log")
 
+    options = webdriver.ChromeOptions()
+    # options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
 
-login_status = login(USER_EMAIL, USER_PASSWORD)
+    driver = webdriver.Chrome(options=options)
 
-if not login_status:
-    logger.error("Login process was unsuccessful. Exiting with code 1")
-    sys.exit(1)
+    driver.set_window_size(1920, 1080)
+
+    def wait(time: int)-> WebDriverWait:
+        return WebDriverWait(driver, time)
+    try:
+        driver.get("https://dev.agromai.com.br/mapa/login")
+        logger.info("Navigated to login page.")
+    except Exception as e:
+        logger.error(f"{email_address}: Error when going to the login page: {e}", exc_info=True)
+        return False
+
+    try:
+        register_button = wait(40).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Registre-se')]"))
+    )
+        register_button.click()
+        logger.info("Clicked 'Registre-se'")
+    except Exception as e:
+        logger.error(f"{email_address}: Error when clicking 'Registre-se': {e}", exc_info=True)
+        return False
     
-novo_atestado_status = novo_atestado("RS-4301107-1712C200BC5741109F2A04C3F5BE040F")
-if not novo_atestado_status:
-    logger.error("Novo atestado process was unsuccessful. Exiting with code 1")
-    sys.exit(2)
+    try:
+        email_field = wait(40).until(
+            EC.visibility_of_element_located((By.CSS_SELECTOR, 'input[placeholder="exemplo@email.com.br"]'))
+        )
+        email_field.send_keys(email_address)
+        logger.info("Entered email to register")
+    except Exception as e:
+        logger.error(f"{email_address}: Error when entering email address: {e}", exc_info=True)
+        return False
+    
+    try:
+        continue_button = wait(40).until(
+        EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Continuar')]"))
+    )
+        continue_button.click()
+        logger.info("Clicked 'Continuar'")    
+    except Exception as e:
+        logger.error(f"{email_address}: Error when clicking 'Continuar': {e}", exc_info=True)
+        return False
+    
+    try:
+        firstpassword_field = wait(40).until(
+            EC.visibility_of_element_located((By.CSS_SELECTOR, 'input[placeholder="Insira sua senha"]'))
+        )
+        firstpassword_field.send_keys(USER_PASSWORD)
+        logger.info("Entered password to register")
+    except Exception as e:
+        logger.error(f"{email_address}: Error when entering password: {e}", exc_info=True)
+        return False
+    
+    try:
+        secondpassword_field = wait(40).until(
+            EC.visibility_of_element_located((By.CSS_SELECTOR, 'input[placeholder="Insira sua senha novamente"]'))
+        )
+        secondpassword_field.send_keys(USER_PASSWORD)
+        logger.info("Entered password confirmation to register")
+    except Exception as e:
+        logger.error(f"{email_address}: Error when entering password confirmation: {e}", exc_info=True)
+        return False
+    
+    try:
+        continue_button = wait(40).until(
+        EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Continuar')]"))
+    )
+        continue_button.click()
+        driver.save_screenshot(f"Teste.png")
+        logger.info("Clicked 'Continuar' during password setup")
+    except Exception as e:
+        logger.error(f"{email_address}: Error when clicking 'Continuar' during password setup: {e}", exc_info=True)
+        return False
+
+    
+    try:
+        driver.save_screenshot(f"Teste2.png")
+        confirmationcode_field = wait(20).until(
+            EC.visibility_of_element_located((By.CSS_SELECTOR, 'input[placeholder="_ _ _ - _ _ _"]'))
+        )
+        driver.save_screenshot(f"Teste3.png")
+        confirmationcode_field.send_keys("111111")
+        logger.info("Entered confirmation code")
+    except Exception as e:
+        driver.save_screenshot(f"Teste4.png")
+        logger.error(f"{email_address}: Error when entering confirmation code: {e}", exc_info=True)
+        return False
+
+    
+    try:
+        driver.save_screenshot(f"Teste5.png")
+        acessarconta_button = wait(40).until(
+        EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Acessar conta')]"))
+    )
+        driver.save_screenshot(f"Teste6.png")
+        acessarconta_button.click()
+        driver.save_screenshot(f"Teste7.png")
+        logger.info("Clicked 'Acessar conta' after entering confirmation code")    
+    except Exception as e:
+        driver.save_screenshot(f"Teste8.png")
+        logger.error(f"{email_address}: Error when clicking 'Acessar conta' after entering confirmation code: {e}", exc_info=True)
+        return False
+    
+    
+    try:
+        username_field = wait(40).until(
+            EC.visibility_of_element_located((By.CSS_SELECTOR, 'input[placeholder="João da Silva"]'))
+        )
+        username_field.send_keys("Nome Sobrenome")
+        logger.info("Entered confirmation code")
+    except Exception as e:
+        logger.error(f"{email_address}: Error when entering confirmation code: {e}", exc_info=True)
+        return False
+    
+    
+    try:
+        wait(40).until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, 'input[placeholder="Selecione a data"]'))
+        ).click()
+        
+        wait(40).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, 'td[title]:not(.ant-picker-cell-disabled)'))
+        ).click()
+
+    except Exception as e:
+        logger.error(f"{email_address}: Error when selecting date: {e}", exc_info=True)
+        return False
+
+
+    try:
+        final_button = wait(40).until(
+        EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Finalizar Cadastro')]"))
+    )
+        final_button.click()
+        logger.info("Clicked 'Finalizar Cadastro' on final step")    
+    except Exception as e:
+        logger.error(f"{email_address}: Error when clicking 'Finalizar Cadastro' on final step: {e}", exc_info=True)
+        return False
+
+    finally:
+        with open('register_user.log', 'a') as log_file:
+            log_file.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Finished registration for email {email_address}\n")
+        # print(f"Got to the final step for {USER_NAME}")
+        driver.quit()
+
+    return True
+
+
+geojson_files = os.listdir("geojson")
+print(geojson_files)
+emails = [f"matheu{i}@email.com" for i in range(1)]
+passwords = [f"#Teste123"] * len(emails)
+
+print(emails)
+print(passwords)
+
+for i, email in enumerate(emails):
+    print(f"Registering {email} with password {passwords[i]}")
+    if register(email, passwords[i]):
+        print(f"Successfully registered {email}")
+    else:
+        print(f"Failed to register {email}")
+
+    add_area(f"geojson/{geojson_files[i]}")
+
+    novo_atestado("")
+
+
 
 time.sleep(100)
-
-
-
-
-
-
-
-    # # Step 11: Click "RS-4306767-E99CD070343A47A286122795F179BD3C" (another instance)
-    # specific_id_link2 = WebDriverWait(driver, 10).until(
-    #     EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'RS-4306767-E99CD070343A47A286122795F179BD3C')]"))
-    # )
-    # specific_id_link2.click()
-    # print("Clicked specific ID link 2.")
-    # time.sleep(2)
-
-    # # Step 12: Click "Talhão 2"
-    # talhao_link = WebDriverWait(driver, 10).until(
-    #     EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'Talhão 2')]"))
-    # )
-    # talhao_link.click()
-    # print("Clicked Talhão 2.")
-    # time.sleep(2)
-
-    # # Step 13: Click "Continuar"
-    # continuar_button_1 = WebDriverWait(driver, 10).until(
-    #     EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Continuar')]"))
-    # )
-    # continuar_button_1.click()
-    # print("Clicked Continuar 1.")
-    # time.sleep(2)
-
-    # # Step 14: Click here. (Ambiguous)
-    # # This step is highly ambiguous. You will need to provide a specific locator.
-    # try:
-    #     click_here_ambiguous = WebDriverWait(driver, 10).until(
-    #         EC.element_to_be_clickable((By.XPATH, "//a[contains(., 'here')] | //button[contains(., 'Click')] | //div[@class='some-specific-class-for-this-click']"))
-    #     )
-    #     click_here_ambiguous.click()
-    #     print("Clicked ambiguous 'Click here' (locator needs refinement).")
-    # except:
-    #     print("Could not find or click the ambiguous 'Click here' in Step 14. Please provide a specific locator.")
-    # time.sleep(2)
-
-    # # Step 15: Click "Arroz"
-    # arroz_option = WebDriverWait(driver, 10).until(
-    #     EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'Arroz')]"))
-    # )
-    # arroz_option.click()
-    # print("Clicked Arroz.")
-    # time.sleep(2)
-
-    # # Step 16: Click the "Selecione a data" field.
-    # date_field = WebDriverWait(driver, 10).until(
-    #     EC.presence_of_element_located((By.XPATH, "//input[@placeholder='Selecione a data']"))
-    # )
-    # date_field.click()
-    # print("Clicked date selection field.")
-    # time.sleep(2)
-
-    # # Step 17: Click "5" (Assuming it's a day in a calendar picker)
-    # day_5 = WebDriverWait(driver, 10).until(
-    #     EC.element_to_be_clickable((By.XPATH, "//div[contains(@class, 'day') and text()='5'] | //span[text()='5']"))
-    # )
-    # day_5.click()
-    # print("Clicked day 5.")
-    # time.sleep(2)
-
-    # # Step 18: Click "Continuar"
-    # continuar_button_2 = WebDriverWait(driver, 10).until(
-    #     EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Continuar')]"))
-    # )
-    # continuar_button_2.click()
-    # print("Clicked Continuar 2.")
-    # time.sleep(2)
-
-    # # Step 19 & 20: Click the "Ex: Banco do Brasil S.A." field and Type "Banrisul"
-    # bank_field = WebDriverWait(driver, 10).until(
-    #     EC.presence_of_element_located((By.XPATH, "//input[@placeholder='Ex: Banco do Brasil S.A.']"))
-    # )
-    # bank_field.send_keys("Banrisul")
-    # print("Entered bank name.")
-    # time.sleep(1)
-
-    # # Step 21: Click here. (Ambiguous)
-    # # This step is highly ambiguous. You will need to provide a specific locator.
-    # try:
-    #     click_here_ambiguous_2 = WebDriverWait(driver, 10).until(
-    #         EC.element_to_be_clickable((By.XPATH, "//a[contains(., 'here')] | //button[contains(., 'Click')] | //div[@class='another-specific-class-for-this-click']"))
-    #     )
-    #     click_here_ambiguous_2.click()
-    #     print("Clicked ambiguous 'Click here' 2 (locator needs refinement).")
-    # except:
-    #     print("Could not find or click the ambiguous 'Click here' in Step 21. Please provide a specific locator.")
-    # time.sleep(2)
-
-    # # Step 22: Click "AP"
-    # ap_option = WebDriverWait(driver, 10).until(
-    #     EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'AP')]"))
-    # )
-    # ap_option.click()
-    # print("Clicked AP.")
-    # time.sleep(2)
-
-    # # Step 23: Click here. (Ambiguous)
-    # # This step is highly ambiguous. You will need to provide a specific locator.
-    # try:
-    #     click_here_ambiguous_3 = WebDriverWait(driver, 10).until(
-    #         EC.element_to_be_clickable((By.XPATH, "//a[contains(., 'here')] | //button[contains(., 'Click')] | //div[@class='yet-another-specific-class-for-this-click']"))
-    #     )
-    #     click_here_ambiguous_3.click()
-    #     print("Clicked ambiguous 'Click here' 3 (locator needs refinement).")
-    # except:
-    #     print("Could not find or click the ambiguous 'Click here' in Step 23. Please provide a specific locator.")
-    # time.sleep(2)
-
-    # # Step 24: Click "Ferreira Gomes"
-    # ferreira_gomes_option = WebDriverWait(driver, 10).until(
-    #     EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'Ferreira Gomes')]"))
-    # )
-    # ferreira_gomes_option.click()
-    # print("Clicked Ferreira Gomes.")
-    # time.sleep(2)
-
-    # # Step 25 & 26: Click the "0,00" field and Type "1111111"
-    # value_field = WebDriverWait(driver, 10).until(
-    #     EC.presence_of_element_located((By.XPATH, "//input[@placeholder='0,00']"))
-    # )
-    # value_field.send_keys("1111111")
-    # print("Entered value.")
-    # time.sleep(1)
-
-    # # Step 27: Click "Continuar"
-    # continuar_button_3 = WebDriverWait(driver, 10).until(
-    #     EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Continuar')]"))
-    # )
-    # continuar_button_3.click()
-    # print("Clicked Continuar 3.")
-    # time.sleep(2)
-
-    # # Step 28: Click "Estou de acordo com as informações e desejo requisitar meu atestado"
-    # agree_checkbox = WebDriverWait(driver, 10).until(
-    #     EC.element_to_be_clickable((By.XPATH, "//label[contains(., 'Estou de acordo com as informações e desejo requisitar meu atestado')] | //input[@type='checkbox' and @id='agree_checkbox_id']"))
-    # )
-    # agree_checkbox.click()
-    # print("Clicked agreement checkbox.")
-    # time.sleep(2)
-
-    # # Step 29: Click "Pagamento"
-    # pagamento_button = WebDriverWait(driver, 10).until(
-    #     EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Pagamento')] | //a[contains(., 'Pagamento')]"))
-    # )
-    # pagamento_button.click()
-    # print("Clicked Pagamento.")
-    # time.sleep(2)
-
-    # # Step 30: Click "RS-4306767-E99CD070343A47A286122795F179BD3C" (final instance)
-    # specific_id_link3 = WebDriverWait(driver, 10).until(
-    #     EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'RS-4306767-E99CD070343A47A286122795F179BD3C')]"))
-    # )
-    # specific_id_link3.click()
-    # print("Clicked specific ID link 3.")
-    # time.sleep(2)
-
-    # # Step 31: Click here. (Ambiguous - likely a final confirmation or download trigger)
-    # # This step is highly ambiguous. You will need to provide a specific locator.
-    # try:
-    #     click_here_ambiguous_4 = WebDriverWait(driver, 10).until(
-    #         EC.element_to_be_clickable((By.XPATH, "//a[contains(., 'here')] | //button[contains(., 'Click')] | //div[@class='final-click-element']"))
-    #     )
-    #     click_here_ambiguous_4.click()
-    #     print("Clicked ambiguous 'Click here' 4 (locator needs refinement).")
-    # except:
-    #     print("Could not find or click the ambiguous 'Click here' in Step 31. Please provide a specific locator.")
-    # time.sleep(5)
-
-# finally:
-#     driver.quit()
-#     print("Browser closed.")
-
-
